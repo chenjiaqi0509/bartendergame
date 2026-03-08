@@ -133,8 +133,11 @@ function StoryText({text,isEvent}){
 function Panel({children,style}){
   const cs={position:"relative",border:`1px solid ${C.brd}`,background:C.bgP,...style};
   const corner=(top,right,bottom,left)=>({
-    position:"absolute",...(top!=null?{top:0}:{}),(bottom!=null?{bottom:0}:{}),
-    ...(left!=null?{left:0}:{}),(right!=null?{right:0}:{}),
+    position:"absolute",
+    ...(top!=null?{top:0}:{}),
+    ...(bottom!=null?{bottom:0}:{}),
+    ...(left!=null?{left:0}:{}),
+    ...(right!=null?{right:0}:{}),
     width:8,height:8,
     borderTop:top?`2px solid ${C.acc}`:"none",
     borderBottom:bottom?`2px solid ${C.acc}`:"none",
