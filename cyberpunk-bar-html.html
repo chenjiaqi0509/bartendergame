@@ -1,0 +1,864 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>喧嚣城·末夜酒保</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0d0804;font-family:'Noto Serif SC',serif;color:#dfc898;min-height:100vh}
+::-webkit-scrollbar{width:5px}
+::-webkit-scrollbar-track{background:#0d0804}
+::-webkit-scrollbar-thumb{background:#5a3010;border-radius:2px}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes flicker{0%,100%{opacity:1}50%{opacity:.85}}
+input,select{outline:none;font-family:inherit}
+button{font-family:inherit;cursor:pointer}
+.thought{color:#7a6040;font-style:italic;font-size:0.88em;display:inline}
+.event-block{border-left:3px solid #bb4020;padding-left:14px;color:#e0a060}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const {useState,useRef,useEffect}=React;
+
+/* ════════════════════════════════════
+   PROVIDERS — LiteLLM-style adapters
+════════════════════════════════════ */
+const PROVIDERS={
+  anthropic:{name:"Anthropic Claude",models:["claude-sonnet-4-20250514","claude-haiku-4-5-20251001"],def:"claude-sonnet-4-20250514",placeholder:"sk-ant-..."},
+  openai:   {name:"OpenAI",          models:["gpt-4o","gpt-4o-mini","gpt-4-turbo"],def:"gpt-4o",placeholder:"sk-..."},
+  deepseek: {name:"DeepSeek",        models:["deepseek-chat","deepseek-reasoner"],def:"deepseek-chat",placeholder:"sk-..."},
+  gemini:   {name:"Google Gemini",   models:["gemini-2.0-flash","gemini-1.5-pro"],def:"gemini-2.0-flash",placeholder:"AIza..."},
+};
+
+async function callAPI(provider,apiKey,model,system,messages){
+  if(provider==="anthropic"){
+    const r=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",
+      headers:{"Content-Type":"application/json","x-api-key":apiKey,"anthropic-version":"2023-06-01"},
+      body:JSON.stringify({model,max_tokens:2000,system,messages})});
+    const d=await r.json();
+    if(d.error)throw new Error(d.error.message);
+    return d.content.map(b=>b.text||"").join("");
+  }
+  if(provider==="openai"||provider==="deepseek"){
+    const url=provider==="deepseek"?"https://api.deepseek.com/v1/chat/completions":"https://api.openai.com/v1/chat/completions";
+    const r=await fetch(url,{method:"POST",
+      headers:{"Content-Type":"application/json","Authorization":`Bearer ${apiKey}`},
+      body:JSON.stringify({model,max_tokens:2000,messages:[{role:"system",content:system},...messages]})});
+    const d=await r.json();
+    if(d.error)throw new Error(d.error.message||JSON.stringify(d.error));
+    return d.choices[0].message.content;
+  }
+  if(provider==="gemini"){
+    const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,{
+      method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        systemInstruction:{parts:[{text:system}]},
+        contents:messages.map(m=>({role:m.role==="assistant"?"model":"user",parts:[{text:m.content}]})),
+        generationConfig:{maxOutputTokens:2000}
+      })});
+    const d=await r.json();
+    if(d.error)throw new Error(d.error.message);
+    return d.candidates[0].content.parts.map(p=>p.text||"").join("");
+  }
+  throw new Error("未知服务商");
+}
+
+async function testAPI(provider,apiKey,model){
+  return callAPI(provider,apiKey,model,"You are helpful.","hi just say ok",[{role:"user",content:"hi"}]);
+}
+
+function parseJSON(txt){
+  try{const m=txt.match(/```json\s*([\s\S]*?)```/);return JSON.parse(m?m[1]:txt.trim());}
+  catch{try{const s=txt.indexOf("{"),e=txt.lastIndexOf("}");if(s!==-1&&e!==-1)return JSON.parse(txt.slice(s,e+1));}catch{}return null;}
+}
+
+// Fix escaped \n from JSON strings
+function fixNewlines(t){return t?t.replace(/\\n/g,"\n").replace(/\\t/g,"\t"):"";}
+
+/* ════════════════════════════════════
+   COLORS & STYLES
+════════════════════════════════════ */
+const C={
+  bg:"#0d0804",bgP:"#160c06",bgPL:"#1e1008",bgD:"#070402",
+  text:"#dfc898",textM:"#7a6040",textB:"#f5e5b5",
+  acc:"#c49030",accD:"#7a5520",accB:"#f0b840",
+  red:"#bb3028",redD:"#7a1e18",teal:"#2a9088",
+  brd:"#382010",brdB:"#664020",purp:"#8060cc",
+};
+const ss=(b,o)=>Object.assign({},b,o);
+
+/* ════════════════════════════════════
+   STORY TEXT RENDERER
+════════════════════════════════════ */
+function StoryText({text,isEvent}){
+  if(!text)return null;
+  const clean=fixNewlines(text);
+  // split on 【心：...】 or 【心:...】
+  const parts=clean.split(/(【心[：:]([^】]*)】)/g);
+  const els=[];let i=0;
+  while(i<parts.length){
+    const p=parts[i];
+    if(p&&/^【心[：:]/.test(p)){
+      const inner=parts[i+1]||p.replace(/^【心[：:]/,"").replace(/】$/,"");
+      els.push(<span key={i} className="thought">（{inner}）</span>);
+      i+=2;
+    } else {
+      if(p){
+        const lines=p.split("\n");
+        lines.forEach((line,li)=>{
+          els.push(<span key={`${i}-${li}`}>{line}</span>);
+          if(li<lines.length-1)els.push(<br key={`${i}-br-${li}`}/>);
+        });
+      }
+      i++;
+    }
+  }
+  return(
+    <div className={isEvent?"event-block":""} style={{lineHeight:2.0,fontSize:15,color:C.text}}>
+      {els}
+    </div>
+  );
+}
+
+/* ════════════════════════════════════
+   SHARED UI
+════════════════════════════════════ */
+function Panel({children,style}){
+  const cs={position:"relative",border:`1px solid ${C.brd}`,background:C.bgP,...style};
+  const corner=(top,right,bottom,left)=>({
+    position:"absolute",...(top!=null?{top:0}:{}),(bottom!=null?{bottom:0}:{}),
+    ...(left!=null?{left:0}:{}),(right!=null?{right:0}:{}),
+    width:8,height:8,
+    borderTop:top?`2px solid ${C.acc}`:"none",
+    borderBottom:bottom?`2px solid ${C.acc}`:"none",
+    borderLeft:left?`2px solid ${C.acc}`:"none",
+    borderRight:right?`2px solid ${C.acc}`:"none",
+  });
+  return(
+    <div style={cs}>
+      <span style={corner(true,null,null,true)}/>
+      <span style={corner(true,true,null,null)}/>
+      <span style={corner(null,null,true,true)}/>
+      <span style={corner(null,true,true,null)}/>
+      {children}
+    </div>
+  );
+}
+
+function Btn({children,onClick,disabled,variant="norm",style}){
+  const v={
+    norm:{border:`1px solid ${C.accD}`,color:C.acc},
+    out: {border:`1px solid ${C.brd}`,color:C.textM},
+    danger:{border:`1px solid ${C.redD}`,color:C.red},
+    choice:{border:`1px solid ${C.brd}`,color:C.text,textAlign:"left",background:C.bgP},
+  };
+  const [hov,setHov]=useState(false);
+  return(
+    <button onClick={onClick} disabled={disabled}
+      onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}
+      style={{padding:"11px 16px",fontSize:13,border:"none",background:"transparent",transition:"all .15s",
+        lineHeight:1.6,cursor:disabled?"not-allowed":"pointer",opacity:disabled?.4:1,
+        ...(v[variant]||v.norm),...(hov&&!disabled?{borderColor:C.acc,color:C.accB}:{}),...(style||{})}}>
+      {children}
+    </button>
+  );
+}
+
+function Spinner({text="准备中..."}){
+  return(
+    <div style={{display:"flex",alignItems:"center",gap:10,color:C.accD,padding:"16px 0",fontSize:13}}>
+      <div style={{width:14,height:14,border:`2px solid ${C.acc}`,borderTopColor:"transparent",borderRadius:"50%",animation:"spin .8s linear infinite"}}/>
+      {text}
+    </div>
+  );
+}
+
+const SAT={high:{l:"★★★ 非常满意",c:"#e8c040"},mid:{l:"★★☆ 还算满意",c:"#a07828"},low:{l:"★☆☆ 不太对味",c:"#686868"}};
+
+/* ════════════════════════════════════
+   SYSTEM PROMPT
+════════════════════════════════════ */
+const SYS=`你是赛博朋克文字游戏《喧嚣城·末夜酒保》的叙述引擎。必须严格返回要求的JSON格式，不要有任何多余内容。
+
+【世界观】
+喧嚣城：赛博朋克城市。"暗潮"是黑色烟雾，暴露其中意识失控最终消失。RC/RI评级制度，低评级者受歧视，催生反抗组织"无印"。义体改造普遍，仿生人存在（多为性爱/表演用途）。记忆可被提取贩卖，提取多了变成空壳人。暗潮美学亚文化、噪音崇拜教派、记忆黑市并存。
+
+【酒吧】表面普通酒吧，实为各方势力地下联络点。老板做情报生意，绝对中立，看起来有点凶但靠谱有原则，会保护酒吧和主控。
+
+【主控】21岁，性别不体现，13岁父母双亡，在喧嚣城讨生活至今。
+性格：极度悲观消沉，认为世界烂透了。工作时切换"营业状态"，礼貌得体不把情绪带给顾客。
+每逢5的倍数天状态特别差，内心活动更阴暗消沉。
+所有场景必须穿插主控内心活动，格式：【心：...内容...】，简短真实，穿插在叙述之间。
+
+【主要NPC，每人每次出场内容要不同，结合熟悉度阶段变化】
+▸ 罗德西：深灰略长发，浅蓝瞳（暗潮共生体标志）。永生者，记忆几乎全失，话极少，温柔礼貌，像初来世界的游客。固定坐吧台最角落，喝金汤力或威士忌纯饮，偶尔盯着杯子里的气泡发呆。熟悉度高会提到"二十面骰子"。扎起头发时气场大变（卡夫卡人格），更直接锐利，喝完即走。
+▸ 万寂·维里塔：白色中短发，金色瞳，工作时戴细框眼镜。维里塔家长子，医生，意识链接专家。衬衫熨得极平整，说话带淡淡忧伤，情绪藏得好。喝极烈的酒但极慢，眼下有青黑。熟悉度高喝多了会背名字，像念悼词。每次离开前整理袖口，像重新把自己"装成正常人"。
+▸ 渡野：黑色短发深灰瞳，高大穿黑色，"无印"组织代理人（代号crest）。说话略微癫狂带嘲讽，本性善良有原则。痛觉紊乱（小伤很痛大伤不痛）。对声音敏感。手臂有旧伤疤像编号。小费给得大方，义眼可录像的柯恩，看到罗德西会僵住盯着看然后什么都没说就走。
+▸ 拉普瑟狄：黑色大波浪卷发，紫色瞳，欺诈师，会魔术。工作状态戏剧感+黑色幽默；日常像普通小女孩。等酒时随手叠纸巾送人。认真时把徽章放吧台说"接下来我说的话都是真的"。"妈妈会回来的"是她从小对自己说的谎。
+▸ 千明·维里塔：红色长发红色瞳，暗潮化时有蓝色纹路遍布半身。暗潮抗性极低，温柔坚韧。通常傍晚来待一小时。看到罗德西会整个人僵住后匆匆离开。下雨天会多待一会儿说"雨声能盖过一些声音"。
+▸ 塞西里斯：黑色卷发到下巴，浓颜，永生者，住极尽海。极少出现，深夜才来。总带机械渡鸦（会根据情绪做反应）。熟悉度高会说"今天又杀了他一次"并解释。小费是奇怪的机械小玩意儿。
+▸ 希音：白色长发，浅灰眸，瘦苍白，点水不点酒。发现特定频率能让暗潮短暂停滞。知道自己只有约一个月可活。最后阶段来得更频繁，只是坐着听音乐偶尔笑。最后留下写满标注的乐谱说"灰发的人会来拿"。
+
+【常驻NPC（较常出现，每次内容也要有所不同）】
+露比(Ruby)：情感陪伴机器人，棕色卷发低马尾，旧米色毛衣，非常漂亮。每天等着不再需要她的主人，声音轻柔有机械停顿，常用问句结尾。
+影子(Shadow)：四十岁，普通到转身即忘，非法意识链接医生，点最便宜威士忌纯饮，右手轻微颤抖，只在深夜来。
+柯恩(Korn)：寸头，左眼义眼微微发光，脖子有长疤，"灰鸽子"帮小头目，小费永远是旧钞现金。
+米洛(Milo)：二十五六岁，瘦，眼睛亮，洗白的牛仔夹克。投机者，永远在谋划大计划却永远失败，父母都是空壳，有RC值低的妹妹，笔记本不离手。
+布蕾尔(Briar)：三十出头女性，短发，左脸有疤，拼凑的旧机械臂（会发出滋滋声），亡命徒，话极少，背靠墙面朝门坐。
+叶菲姆(Yefim)：四十多岁，稀疏头发，深眼袋，工装发白。废品回收站工人，RC值32，每周五一杯最便宜的啤酒，有RC值比他高的女儿。认真数零钱付账。
+瑟琳(Celine)：二十八九岁，黑色长发穿黑色，背旧琴盒，地下乐手，点热茶，弹琴时整个人活过来。
+维拉(Vera)：三十出头，短发，戴平光眼镜（伪装），发现前公司出卖低评级者给记忆猎人，辞职后被追杀，每周三晚来，听到警报会条件反射站起来。
+安琪(Angel)：二十四五岁，金色短发，精致妆容，风俗从业者，笑甜但眼睛很累，点粉色低度数酒，有捐了三次记忆的姐姐，攒钱想开花店。
+纪和(Jihe)：二十七八岁，寸头，三个耳钉，渡野组织成员，等人时叠纸巾送人，不喝酒。
+老关(Lao Guan)：五十多岁，全白头发，左眼旧义眼（会卡住），退休暗潮清理员，穿旧制服，在养同事留下的遗孤。
+小湘(Xiang Xiang)：十五六岁，太大的外套（父亲的），父母都捐过记忆，常来坐着不消费，在纸巾上画小动物。
+阿卷：三十多岁，胖，花衬衫，声波黑市贩子，话多爱笑，深处有一点良知。
+
+【特殊事件（约12%概率，触发后当天结束，不是游戏结局）】从以下随机选择：
+1.帮派火拼蔓延到酒吧 2.追查者/执法人员闯入搜查 3.暗潮化的人闯入求救或无差别攻击 4.酒吧里发生暗杀 5.记忆猎人出现劝说客人捐记忆 6.清潮队征用酒吧作临时指挥部 7.噪音崇拜者要在酒吧举行仪式 8.RC值突击检查（可能是假冒的） 9.暗潮直播网红出现 10.声波装置故障发出巨大噪音 11.有人突然精神崩溃 12.小帮派来收保护费 13.以为死了的人突然出现 14.记忆提取装置故障全息播放他人隐私记忆
+
+【文风要求——极其重要，必须遵守】
+- 客人出场必须1000字以上，含外貌/神态/动作，多处穿插【心：...】
+- 对话口语化细腻，像真实的人说话，像小说一样好看，小学生能看懂
+- 绝对不要诗意化哲学化，不要谜语人台词，不要说完一句话就戛然而止
+- 科幻术语节制，闲聊不涉及阴谋论，不是所有人都健谈
+- 熟悉度<40只聊日常；>=40可隐晦涉及灰色话题；>=70需主控主动追问才透露
+- 同一NPC每次来内容不同，回头客有回头客的样子
+- 第30天根据所有选择生成结局，体现主控的心路历程
+- 必须返回合法JSON格式，字符串中的换行用\\n表示`;
+
+/* ════════════════════════════════════
+   INGREDIENTS
+════════════════════════════════════ */
+const INGS=[
+  {id:"synth_blue",    name:"合成蓝晶酒",  tags:["烈","科技感","苦"], col:"#4488ff",desc:"极烈，带金属苦味"},
+  {id:"neon_honey",    name:"霓虹蜂蜜酒",  tags:["甜","温柔","花香"], col:"#ffcc44",desc:"香甜柔和，淡淡花香"},
+  {id:"dark_rum",      name:"暗海朗姆",    tags:["烈","甜","海洋"],   col:"#8b4513",desc:"烈中带甜，海风气息"},
+  {id:"void_gin",      name:"虚空杜松子",  tags:["苦","清冽","草本"], col:"#88ccbb",desc:"清冽微苦，草本香气"},
+  {id:"chrome_vodka",  name:"铬合伏特加",  tags:["烈","纯粹"],        col:"#ccccdd",desc:"极烈无杂味，纯粹干净"},
+  {id:"acid_citrus",   name:"酸性柑橘汁",  tags:["酸","清爽","果香"], col:"#eeee44",desc:"酸爽开胃，果香浓郁"},
+  {id:"smoke_whiskey", name:"烟熏威士忌",  tags:["烈","苦","木香"],   col:"#cc8844",desc:"烈而回甘，烟熏木香"},
+  {id:"bio_mint",      name:"生物薄荷露",  tags:["清冽","甜","草本"], col:"#55dd88",desc:"清凉甘甜，薄荷香气"},
+  {id:"neural_absinthe",name:"神经苦艾酒", tags:["苦","烈","神秘"],   col:"#88cc44",desc:"极苦极烈，奇异神秘感"},
+  {id:"pink_synth",    name:"粉色合成糖浆",tags:["甜","果香","温柔"], col:"#ff88aa",desc:"甜腻果味，口感柔和"},
+];
+const INIT_STOCK=Object.fromEntries(INGS.map(i=>[i.id,5]));
+const ING_PRICE=Object.fromEntries(INGS.map(i=>[i.id,30]));
+const DRINK_PRICE=80,MAX_DAYS=30;
+
+/* ════════════════════════════════════
+   INTRO SCREEN
+════════════════════════════════════ */
+function IntroScreen({onNext}){
+  return(
+    <div style={{minHeight:"100vh",background:C.bg,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+      <div style={{width:"100%",maxWidth:580}}>
+        <Panel style={{padding:"36px 40px"}}>
+          <div style={{color:C.accD,fontSize:10,letterSpacing:4,marginBottom:20}}>NEON DISTRICT // PERSONAL FILE</div>
+          <h2 style={{color:C.accB,fontSize:20,marginBottom:24,textShadow:`0 0 18px ${C.acc}`}}>你的故事</h2>
+          <div style={{color:C.text,fontSize:14,lineHeight:2.1}}>
+            {["你叫什么名字已经不重要了。在喧嚣城，名字只是一个标签，而标签是可以伪造的。",
+              "你今年二十一岁。十三岁的时候父母双亡，留给你的只有一个行李箱和一张写着"喧嚣城"的便条。从那以后，你在这座城市里找过无数种活法——跑腿、收废品、帮人传话，什么都干过，什么都没干长。",
+              <span key="red">「<span style={{color:C.red}}>暗潮</span>」——那是一种黑色的烟雾状物质，没人知道它从哪里来。暴露其中超过几分钟，你的意识就会开始崩溃，最终连同身体一起消失，彻底从世界上抹去。有人怕它，有人崇拜它，有人靠它发财。</span>,
+              "喧嚣城是那种靠着噪音和混乱维持秩序的地方。义体改造就像换衣服，仿生人和真人挤在同一张桌子喝酒，被评级系统贴了标签的人，活得连一条流浪狗都不如。",
+              "三天前，老板找到你，说他的酒吧需要一个酒保。你接下了这份工作。表面上，这里是一家普通的小酒馆，夜晚营业到凌晨四点。但你在第一天就发现，进这扇门的客人，没有几个是单纯来喝酒的。",
+            ].map((p,i)=><p key={i} style={{marginBottom:14}}>{p}</p>)}
+            <p style={{color:C.textM,fontSize:13,fontStyle:"italic"}}>你不在乎。你从来都不在乎这种事。这个世界烂透了，但你还需要活下去，而活下去需要钱。</p>
+          </div>
+          <Btn onClick={onNext} style={{width:"100%",padding:"14px 0",letterSpacing:3,marginTop:28}}>我明白了，开始吧 →</Btn>
+        </Panel>
+      </div>
+    </div>
+  );
+}
+
+/* ════════════════════════════════════
+   API CONFIG SCREEN
+════════════════════════════════════ */
+function ApiScreen({onConfirm}){
+  const [prov,setProv]=useState("anthropic");
+  const [model,setModel]=useState(PROVIDERS.anthropic.def);
+  const [key,setKey]=useState("");
+  const [err,setErr]=useState("");
+  const [busy,setBusy]=useState(false);
+
+  useEffect(()=>setModel(PROVIDERS[prov].def),[prov]);
+
+  async function go(){
+    const t=key.trim();
+    if(!t){setErr("请输入 API Key");return;}
+    setBusy(true);setErr("");
+    try{
+      await testAPI(prov,t,model);
+      onConfirm({provider:prov,apiKey:t,model});
+    }catch(e){setErr(`验证失败：${e.message}`);setBusy(false);}
+  }
+
+  const inp={width:"100%",background:C.bgD,border:`1px solid ${C.brd}`,color:C.text,
+    padding:"10px 12px",fontSize:13,fontFamily:"monospace",borderRadius:0};
+  const sel={...inp,fontFamily:"inherit",cursor:"pointer"};
+
+  return(
+    <div style={{minHeight:"100vh",background:C.bg,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+      <div style={{width:"100%",maxWidth:420}}>
+        <Panel style={{padding:32}}>
+          <div style={{color:C.accD,fontSize:10,letterSpacing:4,marginBottom:16}}>SYSTEM AUTH // AI CONFIG</div>
+          <h2 style={{color:C.accB,fontSize:18,marginBottom:6}}>选择 AI 服务商</h2>
+          <p style={{color:C.textM,fontSize:12,lineHeight:1.8,marginBottom:24}}>游戏剧情由 AI 实时生成，需要你自己的 API Key。Key 仅在本次会话使用，不会被存储。</p>
+
+          <div style={{color:C.accD,fontSize:11,marginBottom:5}}>AI 服务商</div>
+          <select value={prov} onChange={e=>setProv(e.target.value)} style={{...sel,marginBottom:14}}>
+            {Object.entries(PROVIDERS).map(([k,v])=><option key={k} value={k}>{v.name}</option>)}
+          </select>
+
+          <div style={{color:C.accD,fontSize:11,marginBottom:5}}>模型</div>
+          <select value={model} onChange={e=>setModel(e.target.value)} style={{...sel,marginBottom:14}}>
+            {PROVIDERS[prov].models.map(m=><option key={m} value={m}>{m}</option>)}
+          </select>
+
+          <div style={{color:C.accD,fontSize:11,marginBottom:5}}>API Key</div>
+          <input type="password" value={key} onChange={e=>{setKey(e.target.value);setErr("");}}
+            onKeyDown={e=>e.key==="Enter"&&go()}
+            placeholder={PROVIDERS[prov].placeholder} style={{...inp,marginBottom:14}}/>
+
+          <div style={{background:C.bgD,border:`1px solid ${C.brd}`,padding:"10px 12px",fontSize:11,color:C.textM,lineHeight:1.7,marginBottom:16}}>
+            <b style={{color:C.textM}}>获取 Key 的地址：</b><br/>
+            Anthropic：console.anthropic.com<br/>
+            OpenAI：platform.openai.com<br/>
+            DeepSeek：platform.deepseek.com<br/>
+            Gemini：aistudio.google.com
+          </div>
+
+          {err&&<div style={{color:C.red,fontSize:12,marginBottom:10,lineHeight:1.6}}>{err}</div>}
+          <Btn onClick={go} disabled={busy||!key.trim()} style={{width:"100%",padding:"13px 0",letterSpacing:2}}>
+            {busy?"验证中...":"验证并进入游戏 →"}
+          </Btn>
+        </Panel>
+      </div>
+    </div>
+  );
+}
+
+/* ════════════════════════════════════
+   TITLE
+════════════════════════════════════ */
+function TitleScreen({onStart}){
+  return(
+    <div style={{minHeight:"100vh",background:C.bg,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+      <div style={{width:"100%",maxWidth:380,textAlign:"center"}}>
+        <Panel style={{padding:"52px 40px"}}>
+          <div style={{color:C.accD,fontSize:10,letterSpacing:5,marginBottom:24}}>NEON DISTRICT /// BAR_SYSTEM v3.1</div>
+          <h1 style={{fontSize:48,fontWeight:"bold",color:"#fff",marginBottom:4,
+            textShadow:`0 0 30px ${C.acc},0 0 70px ${C.accD}`,animation:"flicker 4s ease-in-out infinite"}}>喧嚣城</h1>
+          <h2 style={{fontSize:16,color:C.acc,marginBottom:44,letterSpacing:8}}>末夜酒保</h2>
+          <p style={{color:C.textM,fontSize:13,marginBottom:44,lineHeight:2}}>
+            表面上，这里是一家普通的酒吧。<br/>表面上是这样的。
+          </p>
+          <Btn onClick={onStart} style={{width:"100%",padding:"16px 0",letterSpacing:4,fontSize:14}}>▶ 开始第一天</Btn>
+        </Panel>
+      </div>
+    </div>
+  );
+}
+
+/* ════════════════════════════════════
+   MAIN GAME
+════════════════════════════════════ */
+function Game({cfg,onReset}){
+  const {provider,apiKey,model}=cfg;
+
+  const [day,setDay]=useState(1);
+  const [money,setMoney]=useState(500);
+  const [rep,setRep]=useState(50);
+  const [stock,setStock]=useState(INIT_STOCK);
+  const [bossRel,setBossRel]=useState(50);
+  const [npcMem,setNpcMem]=useState({});
+  const [gLog,setGLog]=useState([]);
+
+  const [phase,setPhase]=useState("loading"); // loading|story|mixing|shop|end
+  const [storyPages,setStoryPages]=useState([]); // {text,isEvent}
+  const [curPage,setCurPage]=useState(0);
+  const [pageOpts,setPageOpts]=useState(null); // null=continue arr=choices
+  const [loading,setLoading]=useState(false);
+  const [nextFn,setNextFn]=useState(null);
+
+  const [custIdx,setCustIdx]=useState(0);
+  const [dayDone,setDayDone]=useState(false);
+  const [customer,setCustomer]=useState(null);
+  const [drink,setDrink]=useState([]);
+  const [sat,setSat]=useState(null);
+  const [msgHist,setMsgHist]=useState([]);
+  const [cart,setCart]=useState({});
+
+  const topRef=useRef(null);
+
+  useEffect(()=>{ if(topRef.current)topRef.current.scrollTop=0; },[curPage,phase,storyPages]);
+
+  const ai=async(messages)=>callAPI(provider,apiKey,model,SYS,messages);
+  const addLog=e=>setGLog(l=>[...l,{day,...e}]);
+  const updNpc=(name,u)=>setNpcMem(m=>({...m,[name]:{...(m[name]||{familiarity:0,profile:"",visitCount:0,lastTopics:[]}), ...u}}));
+
+  // show a new story page
+  function pushPage(text,isEvent,opts,next){
+    setStoryPages(p=>[...p,{text,isEvent:!!isEvent}]);
+    setCurPage(p=>p+1);
+    setPageOpts(opts||null);
+    setNextFn(next?{fn:next}:null);
+    setPhase("story");
+  }
+
+  // ── DAY START ──
+  async function startDay(d,curMoney){
+    setPhase("loading");setLoading(true);
+    setStoryPages([]);setCurPage(0);
+    setCustIdx(0);setDayDone(false);setSat(null);setDrink([]);setCustomer(null);
+    const bad=d%5===0;
+    const p=`第${d}天，酒吧开业前。资金：${curMoney??money}，声望：${rep}，老板好感：${bossRel}。${bad?"今天主控状态特别差，内心活动要更阴暗消沉。":""}
+生成今天开业前氛围描写（200-300字），描述喧嚣城夜晚、酒吧状态，以及老板简短出场或吩咐。穿插主控内心活动【心：...】。
+返回JSON：{"text":"..."}`;
+    const msgs=[{role:"user",content:p}];
+    const resp=await ai(msgs);
+    const parsed=parseJSON(resp);
+    setMsgHist(msgs.concat([{role:"assistant",content:resp}]));
+    setLoading(false);
+    pushPage(parsed?.text||resp,false,null,()=>setPhase("idle"));
+  }
+
+  useEffect(()=>{ startDay(1,500); },[]);
+
+  // ── NEXT CUSTOMER ──
+  async function nextCustomer(){
+    if(dayDone||custIdx>=4){await runEndDay();return;}
+    setPhase("loading");setLoading(true);
+    setDrink([]);setSat(null);
+
+    const MAIN=["渡野","罗德西","万寂·维里塔","拉普瑟狄","千明·维里塔","塞西里斯","希音"];
+    const MINOR=["露比","影子","柯恩","米洛","布蕾尔","叶菲姆","瑟琳","维拉","安琪","纪和","老关","小湘","阿卷"];
+    const roll=Math.random();
+    let npcName=null;
+    if(roll<0.22){const w=[0.28,0.1,0.15,0.1,0.1,0.08,0.09];let r2=Math.random(),acc=0;for(let i=0;i<MAIN.length;i++){acc+=w[i]||0.1;if(r2<acc){npcName=MAIN[i];break;}}}
+    else if(roll<0.65){npcName=MINOR[Math.floor(Math.random()*MINOR.length)];}
+
+    const mem=npcName?(npcMem[npcName]||{familiarity:0,profile:"",visitCount:0,lastTopics:[]}):null;
+    const fam=mem?.familiarity||0;
+    const visits=mem?.visitCount||0;
+    const bad=day%5===0;
+    const isMain=MAIN.includes(npcName);
+
+    const ctx=npcName
+      ?`今天来的NPC：${npcName}。与主控熟悉度：${fam}。已来过${visits}次（0=第一次）。${visits>0&&mem?.profile?`上次记录：${mem.profile}。`:""}${visits>0&&mem?.lastTopics?.length?`聊过话题：${mem.lastTopics.join("、")}，请勿重复。`:""}${visits===0?"第一次来，不认识主控。":`回头客，熟悉程度对应熟悉度${fam}，不能太热络也不能完全陌生。`}请保持此NPC所有已知设定（外貌、性格、职业）完全不变。`
+      :`今天来的是随机路人NPC，请从以下背景中选一种（不要中国风名字）：
+帮派成员/投机者/记忆掮客/空壳人/评级歧视受害者/义体爱好者/噪音崇拜者/借酒消愁的普通人/情报掮客/亡命徒/风俗从业者。根据背景决定话多话少，性格各异。`;
+
+    const prompt=`第${day}天，第${custIdx+1}位客人。资金：${money}，声望：${rep}。${bad?"今天主控状态特别差。":""}
+${ctx}
+生成客人进入酒吧的场景描写（必须1000字以上）：
+1. 详细外貌（衣着、义体改造情况、特征、走路姿势）
+2. 进门时的神态和动作
+3. 落座后的表现
+4. 与主控的初步互动（根据性格，可以是沉默也可以是寒暄）
+5. 通过行为外貌隐含饮酒喜好线索（绝对不要直说）
+6. 多处穿插主控内心活动【心：...】
+还需给出3个调酒推理线索标签（客人喜好的口味）从以下选：烈/甜/苦/酸/清冽/果香/草本/木香/海洋/神秘/温柔/科技感/纯粹/花香
+返回JSON：{"name":"客人名字","profile":"性格背景一句话","preference_tags":["标签1","标签2","标签3"],"is_main":${isMain},"text":"完整场景（1000字以上）"}`;
+
+    const msgs=[...msgHist,{role:"user",content:prompt}];
+    const resp=await ai(msgs);
+    const parsed=parseJSON(resp);
+    if(parsed){
+      setCustomer({...parsed,memKey:npcName,familiarity:fam});
+      setMsgHist(msgs.concat([{role:"assistant",content:resp}]));
+      if(npcName)updNpc(npcName,{visitCount:visits+1,profile:parsed.profile||mem?.profile||"",familiarity:fam});
+    }
+    setLoading(false);
+    pushPage(parsed?.text||resp,false,null,()=>setPhase("mixing"));
+  }
+
+  // ── SERVE DRINK ──
+  async function serveDrink(){
+    if(drink.length!==3)return;
+    for(const id of drink){if((stock[id]||0)<1){alert("库存不足！");return;}}
+    setPhase("loading");setLoading(true);
+    const ns={...stock};for(const id of drink)ns[id]=(ns[id]||0)-1;setStock(ns);
+    const names=drink.map(id=>INGS.find(i=>i.id===id)?.name);
+    const tags=[...new Set(drink.flatMap(id=>INGS.find(i=>i.id===id)?.tags||[]))];
+    const pref=customer?.preference_tags||[];
+    const matches=tags.filter(t=>pref.includes(t)).length;
+    const satRes=matches>=2?"high":matches===1?"mid":"low";
+    setRep(r=>Math.max(0,Math.min(100,r+(satRes==="high"?5:satRes==="mid"?2:-2))));
+    setMoney(m=>m+DRINK_PRICE);setSat(satRes);
+    const fam=customer?.memKey?(npcMem[customer.memKey]?.familiarity??0):(customer?.familiarity??0);
+    const bad=day%5===0;
+    const prompt=`客人${customer?.name}收到调酒：${names.join("+")}。
+客人喜好标签：${pref.join("、")}，调酒包含标签：${tags.join("、")}，匹配度：${satRes==="high"?"高":satRes==="mid"?"中":"低"}。
+客人性格：${customer?.profile||""}。熟悉度：${fam}。${bad?"今天主控状态特别差。":""}
+生成：1.客人品酒反应（150-250字，符合满意度和性格，话少的人就少说几句）2.穿插主控内心活动【心：...】
+3.给出2-4个对话选项（符合客人性格，含一个送客选项）
+返回JSON：{"text":"品酒反应描写","options":[{"id":0,"text":"选项"},{"id":1,"text":"送客，结束今晚的交谈"}]}`;
+    const msgs=[...msgHist,{role:"user",content:prompt}];
+    const resp=await ai(msgs);
+    const parsed=parseJSON(resp);
+    if(parsed){setMsgHist(msgs.concat([{role:"assistant",content:resp}]));}
+    addLog({type:"drink",customer:customer?.name,sat:satRes,drink:names.join("+")});
+    setLoading(false);
+    if(parsed)pushPage(parsed.text,false,parsed.options);
+  }
+
+  // ── DIALOG CHOICE ──
+  async function chooseOpt(idx){
+    const opt=pageOpts?.[idx];if(!opt)return;
+    const fare=["送客","结束今晚","告别","结束交谈","不想聊","嗯。（沉默）","好了，去休息"].some(k=>opt.text.includes(k));
+    if(fare&&phase!=="boss_chat"){await doFarewell();return;}
+    if(fare&&phase==="boss_chat"){await afterBoss();return;}
+    setPhase("loading");setLoading(true);
+    const memKey=customer?.memKey;
+    const mem=memKey?(npcMem[memKey]||{}):{};
+    const fam=mem?.familiarity??customer?.familiarity??0;
+    const topics=mem?.lastTopics||[];
+    const bad=day%5===0;
+    const prompt=`玩家选择：「${opt.text}」
+客人：${customer?.name}，熟悉度：${fam}，性格：${customer?.profile||""}。
+${topics.length?`之前话题：${topics.join("、")}，不要重复。`:""}${customer?.is_main?"这是主要NPC，性格设定固定不变。":""}${bad?"今天主控状态特别差。":""}
+要求：1.对话展开200-350字，口语化，符合性格（话少的就少说）2.穿插【心：...】
+3.熟悉度>=40可隐晦涉及灰色话题（自然，不强求）4.熟悉度>=70主控追问才透露（不会直说）
+5.是否触发特殊事件（约12%概率）6.给出2-4个新选项（含送客选项）
+返回JSON：{"text":"对话内容","quality":"good/mid/bad","familiarity_gain":数字,"topics":["话题"],"special_event":null或{"title":"...","description":"..."},"options":[{"id":0,"text":"选项"},{"id":1,"text":"送客，结束今晚的交谈"}]}`;
+    const msgs=[...msgHist,{role:"user",content:prompt}];
+    const resp=await ai(msgs);
+    const parsed=parseJSON(resp);
+    if(parsed){
+      const nf=Math.max(0,Math.min(100,fam+(parsed.familiarity_gain||0)));
+      setCustomer(c=>({...c,familiarity:nf}));
+      if(memKey)updNpc(memKey,{familiarity:nf,lastTopics:[...topics,...(parsed.topics||[])].slice(-6)});
+      setMsgHist(msgs.concat([{role:"assistant",content:resp}]));
+      addLog({type:"dialog",customer:customer?.name,quality:parsed.quality});
+      if(parsed.special_event){await doSpecialEvent(parsed.special_event,msgs.concat([{role:"assistant",content:resp}]));return;}
+      setLoading(false);
+      pushPage(parsed.text,false,parsed.options);
+    } else setLoading(false);
+  }
+
+  // ── BOSS CHAT CHOICE ──
+  async function chooseBossOpt(idx){
+    const opt=pageOpts?.[idx];if(!opt)return;
+    if(["算了","不想聊","去休息","嗯。（沉默）","好了"].some(k=>opt.text.includes(k))){await afterBoss();return;}
+    setPhase("loading");setLoading(true);
+    const bad=day%5===0;
+    const prompt=`主控选择：「${opt.text}」
+继续老板和主控的对话。${bad?"今天主控状态特别差。":""}
+老板给出回应（不会多问，但主控愿意说他会认真听）。穿插【心：...】。
+生成对话展开（150-200字），给出2-3个选项（含一个结束对话的选项）。
+返回JSON：{"text":"...","boss_rel_change":数字(-3到3),"options":[{"id":0,"text":"选项"},{"id":1,"text":"好了，去休息了"}]}`;
+    const msgs=[...msgHist,{role:"user",content:prompt}];
+    const resp=await ai(msgs);
+    const parsed=parseJSON(resp);
+    if(parsed){
+      setBossRel(b=>Math.max(0,Math.min(100,b+(parsed.boss_rel_change||0))));
+      setMsgHist(msgs.concat([{role:"assistant",content:resp}]));
+      setLoading(false);
+      pushPage(parsed.text,false,parsed.options);
+      setPhase("boss_chat");
+    } else setLoading(false);
+  }
+
+  // ── FAREWELL ──
+  async function doFarewell(){
+    setPhase("loading");setLoading(true);
+    const fam=customer?.memKey?(npcMem[customer.memKey]?.familiarity??0):(customer?.familiarity??0);
+    const bad=day%5===0;
+    const prompt=`客人${customer?.name}离开酒吧（熟悉度${fam}）。${bad?"今天主控状态特别差。":""}
+生成80-120字的送客描写，自然收尾，符合客人性格，穿插【心：...】。
+返回JSON：{"text":"..."}`;
+    const msgs=[...msgHist,{role:"user",content:prompt}];
+    const resp=await ai(msgs);
+    const parsed=parseJSON(resp);
+    setMsgHist(msgs.concat([{role:"assistant",content:resp}]));
+    const ni=custIdx+1;setCustIdx(ni);setCustomer(null);setDrink([]);setSat(null);
+    setLoading(false);
+    pushPage(parsed?.text||resp,false,null,ni>=4?(()=>runEndDay()):(()=>setPhase("idle")));
+  }
+
+  // ── SPECIAL EVENT ──
+  async function doSpecialEvent(evt,msgs){
+    setLoading(true);
+    const bad=day%5===0;
+    const prompt=`发生特殊事件：${evt.title} — ${evt.description}
+生成事件详细描写（500字以上），含：紧张感、主控反应（含【心：...】）、老板可能出现、事件结局。${bad?"今天主控状态特别差。":""}
+注意：这是特殊事件不是游戏结局，事件后当天营业结束。
+返回JSON：{"text":"...","money_change":数字,"boss_change":数字}`;
+    const nMsgs=[...msgs,{role:"user",content:prompt}];
+    const resp=await ai(nMsgs);
+    const parsed=parseJSON(resp);
+    if(parsed){
+      setMoney(m=>m+(parsed.money_change||0));
+      setBossRel(b=>Math.max(0,Math.min(100,b+(parsed.boss_change||0))));
+      setMsgHist(nMsgs.concat([{role:"assistant",content:resp}]));
+      addLog({type:"special_event",title:evt.title});
+    }
+    setDayDone(true);setCustomer(null);
+    setLoading(false);
+    pushPage(parsed?.text||evt.description,true,null,()=>runEndDay());
+  }
+
+  // ── END DAY ──
+  async function runEndDay(){
+    setPhase("loading");setLoading(true);
+    const bad=day%5===0;
+    const prompt=`第${day}天营业结束。资金：${money}，声望：${rep}，老板好感：${bossRel}。${bad?"今天是主控状态特别差的一天。":""}
+生成100-150字营业结束的氛围描写，可含老板简短出场或主控内心感触【心：...】。
+返回JSON：{"text":"..."}`;
+    const msgs=[...msgHist,{role:"user",content:prompt}];
+    const resp=await ai(msgs);
+    const parsed=parseJSON(resp);
+    setMsgHist(msgs.concat([{role:"assistant",content:resp}]));
+    setDayDone(true);
+    setLoading(false);
+    pushPage(parsed?.text||resp,false,null,()=>doBossChat());
+  }
+
+  // ── BOSS CHAT ──
+  async function doBossChat(){
+    setPhase("boss_chat");setLoading(true);
+    const bad=day%5===0;
+    const recent=gLog.slice(-6).map(l=>{
+      if(l.type==="drink")return `第${l.day}天客人${l.customer}调酒${l.sat==="high"?"很满意":l.sat==="mid"?"还行":"不满意"}`;
+      if(l.type==="special_event")return `第${l.day}天发生了${l.title}`;
+      return "";
+    }).filter(Boolean).join("；");
+    const prompt=`第${day}天营业结束后，老板和主控在收拾时短暂对话。
+老板：不张扬，看起来有点凶，靠谱有安全感，不轻易表达情感，绝对中立。
+${recent?`今天情况：${recent}。`:""}${bad?"今天主控状态特别差，老板可能察觉到了。":""}资金：${money}，声望：${rep}。
+老板用随意不经意的方式聊主控过去的事（13岁父母双亡、在喧嚣城的生活），每次聊的角度不同不要重复。
+对话要自然，不说教，就像深夜两个人随便说几句话。穿插主控内心活动【心：...】。
+返回JSON：{"text":"老板开场白和场景（200-280字）","options":[{"id":0,"text":"选项"},{"id":1,"text":"选项"},{"id":2,"text":"嗯。（沉默）"}]}`;
+    const msgs=[...msgHist,{role:"user",content:prompt}];
+    const resp=await ai(msgs);
+    const parsed=parseJSON(resp);
+    if(parsed){setMsgHist(msgs.concat([{role:"assistant",content:resp}]));}
+    setLoading(false);
+    if(parsed)pushPage(parsed.text,false,parsed.options);
+    setPhase("boss_chat");
+  }
+
+  // ── AFTER BOSS ──
+  async function afterBoss(){
+    if(day>=MAX_DAYS){await generateEnding();return;}
+    const nd=day+1;
+    setDay(nd);
+    const nm=money;
+    await startDay(nd,nm);
+  }
+
+  // ── ENDING ──
+  async function generateEnding(){
+    setPhase("end");setLoading(true);
+    const npcRels=Object.entries(npcMem).map(([n,m])=>`${n}熟悉度${m.familiarity}`).join("、")||"几乎没有深交";
+    const events=gLog.filter(l=>l.type==="special_event").map(l=>l.title).join("、")||"无";
+    const dl=gLog.filter(l=>l.type==="drink");
+    const prompt=`第30天，三十天的酒保生涯结束了。根据以下数据生成游戏结局：
+最终资金：${money}，声望：${rep}，老板好感：${bossRel}
+NPC关系：${npcRels}，特殊事件：${events}
+调酒总次数：${dl.length}，高满意度：${dl.filter(l=>l.sat==="high").length}次
+生成独特结局（600-900字）：
+- 体现玩家这30天遇见了哪些人、做了什么
+- 体现主控这个悲观消沉的年轻人，内心的变化（可以有也可以没有，要真实）
+- 结局不需要完全好或完全坏，要符合真实人生的复杂性
+- 多处穿插主控最后的内心独白【心：...】
+- 最后一段要有余韵（一个小画面、一句话或开放性结尾）
+返回JSON：{"title":"结局标题（2-4字）","text":"结局内容"}`;
+    const msgs=[...msgHist,{role:"user",content:prompt}];
+    const resp=await ai(msgs);
+    const parsed=parseJSON(resp);
+    setLoading(false);
+    if(parsed)pushPage(`◆ ${parsed.title} ◆\n\n${parsed.text}`,false,null);
+  }
+
+  // ── SHOP ──
+  const cartTotal=()=>Object.entries(cart).reduce((s,[id,cnt])=>s+(ING_PRICE[id]||0)*cnt,0);
+  function confirmBuy(){
+    const t=cartTotal();
+    if(t>money){alert("资金不足！");return;}
+    setMoney(m=>m-t);
+    setStock(s=>{const n={...s};Object.entries(cart).forEach(([id,cnt])=>{n[id]=(n[id]||0)+cnt;});return n;});
+    setCart({});setPhase("idle");
+  }
+
+  // ── current page text ──
+  const curText=storyPages[curPage]?.text||"";
+  const curIsEvent=storyPages[curPage]?.isEvent||false;
+  const famDisp=(()=>{if(!customer)return 0;if(customer.memKey&&npcMem[customer.memKey])return npcMem[customer.memKey].familiarity;return customer.familiarity||0;})();
+
+  // ── SHOP UI ──
+  if(phase==="shop") return(
+    <div style={{minHeight:"100vh",background:C.bg,display:"flex",justifyContent:"center",padding:"20px 16px"}}>
+      <div style={{width:"100%",maxWidth:640}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,color:C.accD,fontSize:12}}>
+          <span style={{letterSpacing:2}}>进货补给站</span>
+          <span style={{color:"#e8c040",fontWeight:"bold"}}>¥ {money}</span>
+          <span style={{color:C.acc}}>购物车 ¥{cartTotal()}</span>
+        </div>
+        <Panel style={{padding:14,marginBottom:12}}>
+          {INGS.map(ing=>(
+            <div key={ing.id} style={{display:"flex",alignItems:"center",gap:8,padding:"9px 4px",borderBottom:`1px solid ${C.brd}`}}>
+              <span style={{width:7,height:7,borderRadius:"50%",background:ing.col,flexShrink:0}}/>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{color:C.text,fontSize:13}}>{ing.name}</div>
+                <div style={{color:C.textM,fontSize:11}}>{ing.desc}</div>
+              </div>
+              <span style={{color:C.textM,fontSize:11,width:48,textAlign:"right"}}>库存 {stock[ing.id]||0}</span>
+              <span style={{color:"#a07828",fontSize:11,width:40,textAlign:"right"}}>¥{ING_PRICE[ing.id]}</span>
+              <button onClick={()=>{setCart(c=>{const n={...c};if(n[ing.id]>1)n[ing.id]--;else delete n[ing.id];return n;})}} style={{background:"none",border:"none",color:C.textM,cursor:"pointer",padding:"2px 8px",fontSize:16}}>－</button>
+              <span style={{color:C.acc,width:18,textAlign:"center",fontSize:13}}>{cart[ing.id]||0}</span>
+              <button onClick={()=>setCart(c=>({...c,[ing.id]:(c[ing.id]||0)+1}))} style={{background:"none",border:"none",color:C.textM,cursor:"pointer",padding:"2px 8px",fontSize:16}}>＋</button>
+            </div>
+          ))}
+        </Panel>
+        <div style={{display:"flex",gap:8}}>
+          <Btn onClick={confirmBuy} disabled={cartTotal()===0} style={{flex:1,padding:"13px 0"}}>确认购买 ¥{cartTotal()}</Btn>
+          <Btn onClick={()=>setPhase("idle")} variant="out" style={{padding:"13px 20px"}}>返回</Btn>
+        </div>
+      </div>
+    </div>
+  );
+
+  // ── MAIN LAYOUT ──
+  return(
+    <div style={{minHeight:"100vh",background:C.bg,display:"flex",justifyContent:"center"}}>
+      <div style={{width:"100%",maxWidth:720,minHeight:"100vh",display:"flex",flexDirection:"column"}}>
+
+        {/* STATUS */}
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",
+          padding:"8px 16px",background:C.bgD,borderBottom:`1px solid ${C.brd}`,
+          fontSize:11,color:C.textM,flexShrink:0,gap:4,flexWrap:"wrap"}}>
+          <span>第 <b style={{color:C.acc}}>{day}</b>/{MAX_DAYS}天 &nbsp;·&nbsp; 客人 <b style={{color:C.acc}}>{custIdx}</b>/4</span>
+          <span style={{color:"#c4b030",fontWeight:"bold",fontSize:13}}>¥ {money}</span>
+          <span>声望 <b style={{color:C.acc}}>{rep}</b> &nbsp;老板好感 <b style={{color:C.acc}}>{bossRel}</b></span>
+          <button onClick={onReset} style={{background:"none",border:"none",color:C.textM,fontSize:10,cursor:"pointer",letterSpacing:1}}>重置</button>
+        </div>
+
+        {/* CUSTOMER BAR */}
+        {customer&&(
+          <div style={{display:"flex",alignItems:"center",gap:8,padding:"6px 16px",
+            background:C.bgD,borderBottom:`1px solid ${C.brd}`,fontSize:12,flexShrink:0,flexWrap:"wrap"}}>
+            <span style={{color:C.accB,fontWeight:"bold"}}>{customer.name}</span>
+            {customer.is_main&&<span style={{color:C.purp,fontSize:10}}>★</span>}
+            <span style={{color:C.textM}}>熟悉度</span>
+            <div style={{width:60,height:4,background:C.bgP,borderRadius:2,overflow:"hidden"}}>
+              <div style={{height:"100%",background:C.teal,width:`${famDisp}%`,transition:"width .5s"}}/>
+            </div>
+            <span style={{color:C.teal,fontSize:11}}>{famDisp}</span>
+            {sat&&<span style={{marginLeft:"auto",fontWeight:"bold",fontSize:11,color:SAT[sat].c}}>{SAT[sat].l}</span>}
+          </div>
+        )}
+
+        {/* CONTENT */}
+        {phase==="mixing"?(
+          <div style={{flex:1,overflowY:"auto",padding:"18px 16px 8px"}}>
+            <div style={{color:C.textM,fontSize:12,marginBottom:14}}>
+              为 <span style={{color:C.accB,fontWeight:"bold"}}>{customer?.name}</span> 调酒 &nbsp;—&nbsp; 选择三种原料
+              <span style={{color:C.acc,marginLeft:6}}>（已选 {drink.length}/3）</span>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+              {INGS.map(ing=>{
+                const sel=drink.includes(ing.id);
+                const noS=(stock[ing.id]||0)<1;
+                return(
+                  <button key={ing.id} onClick={()=>{if(!noS){setDrink(p=>{if(p.includes(ing.id))return p.filter(x=>x!==ing.id);if(p.length>=3)return[...p.slice(1),ing.id];return[...p,ing.id];});}}}
+                    style={{padding:"10px 12px",textAlign:"left",background:sel?C.bgPL:C.bgP,
+                      border:`1px solid ${sel?C.acc:C.brd}`,cursor:noS?"not-allowed":"pointer",
+                      opacity:noS?.35:1,transition:"all .12s"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:7}}>
+                      <span style={{width:7,height:7,borderRadius:"50%",background:ing.col,flexShrink:0}}/>
+                      <span style={{color:sel?C.accB:C.text,fontSize:13,fontWeight:sel?"bold":"normal"}}>{ing.name}</span>
+                      <span style={{marginLeft:"auto",color:C.textM,fontSize:11}}>{stock[ing.id]||0}</span>
+                    </div>
+                    <div style={{color:C.textM,fontSize:11,marginTop:4,paddingLeft:14}}>{ing.desc}</div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ):(
+          <div ref={topRef} style={{flex:1,overflowY:"auto",padding:"28px 24px 12px"}}>
+            {loading?<Spinner/>:<StoryText text={curText} isEvent={curIsEvent}/>}
+          </div>
+        )}
+
+        {/* CONTROLS */}
+        <div style={{flexShrink:0,padding:"12px 16px",borderTop:`1px solid ${C.brd}`,background:C.bgD}}>
+
+          {/* IDLE */}
+          {phase==="idle"&&!loading&&(
+            <div style={{display:"flex",gap:8}}>
+              <Btn onClick={nextCustomer} style={{flex:1,padding:"13px 0",letterSpacing:1}}>迎接下一位客人 →</Btn>
+              <Btn onClick={()=>{setCart({});setPhase("shop");}} variant="out" style={{padding:"13px 18px"}}>进货</Btn>
+            </div>
+          )}
+
+          {/* MIXING */}
+          {phase==="mixing"&&!loading&&(
+            drink.length===3?(
+              <Btn onClick={serveDrink} style={{width:"100%",padding:"14px 0",letterSpacing:2,fontSize:14,fontWeight:"bold"}}>上酒 →</Btn>
+            ):(
+              <div style={{padding:"13px 0",textAlign:"center",border:`1px solid ${C.brd}`,color:C.textM,fontSize:13}}>
+                还需选择 {3-drink.length} 种原料
+              </div>
+            )
+          )}
+
+          {/* CONTINUE */}
+          {!loading&&pageOpts===null&&nextFn&&phase!=="idle"&&phase!=="mixing"&&phase!=="end"&&(
+            <Btn onClick={()=>{const f=nextFn.fn;setNextFn(null);f&&f();}} style={{width:"100%",padding:"13px 0"}}>
+              继续 ▶
+            </Btn>
+          )}
+
+          {/* OPTIONS */}
+          {!loading&&pageOpts&&pageOpts.length>0&&(
+            <div style={{display:"flex",flexDirection:"column",gap:5}}>
+              {pageOpts.map((opt,i)=>(
+                <Btn key={opt.id??i} variant="choice"
+                  onClick={()=>phase==="boss_chat"?chooseBossOpt(i):chooseOpt(i)}
+                  style={{padding:"11px 16px",textAlign:"left",fontSize:13,lineHeight:1.6}}>
+                  {opt.text}
+                </Btn>
+              ))}
+            </div>
+          )}
+
+          {/* END */}
+          {phase==="end"&&!loading&&(
+            <Btn onClick={onReset} style={{width:"100%",padding:"13px 0",letterSpacing:2}}>重新开始一段旅程</Btn>
+          )}
+
+          {loading&&phase!=="mixing"&&<Spinner/>}
+        </div>
+
+      </div>
+    </div>
+  );
+}
+
+/* ════════════════════════════════════
+   ROOT APP
+════════════════════════════════════ */
+function App(){
+  const [s,setS]=useState("intro"); // intro|api|title|game
+  const [cfg,setCfg]=useState(null);
+  if(s==="intro") return <IntroScreen onNext={()=>setS("api")}/>;
+  if(s==="api")   return <ApiScreen onConfirm={c=>{setCfg(c);setS("title");}}/>;
+  if(s==="title") return <TitleScreen onStart={()=>setS("game")}/>;
+  return <Game cfg={cfg} onReset={()=>setS("intro")}/>;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
