@@ -79,7 +79,6 @@ function parseJSON(txt){
   catch{try{const s=txt.indexOf("{"),e=txt.lastIndexOf("}");if(s!==-1&&e!==-1)return JSON.parse(txt.slice(s,e+1));}catch{}return null;}
 }
 
-// Fix escaped \n from JSON strings
 function fixNewlines(t){return t?t.replace(/\\n/g,"\n").replace(/\\t/g,"\t"):"";}
 
 /* ════════════════════════════════════
@@ -100,7 +99,6 @@ const ss=(b,o)=>Object.assign({},b,o);
 function StoryText({text,isEvent}){
   if(!text)return null;
   const clean=fixNewlines(text);
-  // split on 【心：...】 or 【心:...】
   const parts=clean.split(/(【心[：:]([^】]*)】)/g);
   const els=[];let i=0;
   while(i<parts.length){
@@ -268,7 +266,7 @@ function IntroScreen({onNext}){
           <h2 style={{color:C.accB,fontSize:20,marginBottom:24,textShadow:`0 0 18px ${C.acc}`}}>你的故事</h2>
           <div style={{color:C.text,fontSize:14,lineHeight:2.1}}>
             {["你叫什么名字已经不重要了。在喧嚣城，名字只是一个标签，而标签是可以伪造的。",
-              "你今年二十一岁。十三岁的时候父母双亡，留给你的只有一个行李箱和一张写着“喧嚣城”的便条。从那以后，你在这座城市里找过无数种活法——跑腿、收废品、帮人传话，什么都干过，什么都没干长。",
+              "你今年二十一岁。十三岁的时候父母双亡，留给你的只有一个行李箱和一张写着"喧嚣城"的便条。从那以后，你在这座城市里找过无数种活法——跑腿、收废品、帮人传话，什么都干过，什么都没干长。",
               <span key="red">「<span style={{color:C.red}}>暗潮</span>」——那是一种黑色的烟雾状物质，没人知道它从哪里来。暴露其中超过几分钟，你的意识就会开始崩溃，最终连同身体一起消失，彻底从世界上抹去。有人怕它，有人崇拜它，有人靠它发财。</span>,
               "喧嚣城是那种靠着噪音和混乱维持秩序的地方。义体改造就像换衣服，仿生人和真人挤在同一张桌子喝酒，被评级系统贴了标签的人，活得连一条流浪狗都不如。",
               "三天前，老板找到你，说他的酒吧需要一个酒保。你接下了这份工作。表面上，这里是一家普通的小酒馆，夜晚营业到凌晨四点。但你在第一天就发现，进这扇门的客人，没有几个是单纯来喝酒的。",
@@ -385,10 +383,9 @@ function Game({cfg,onReset}){
   const [npcMem,setNpcMem]=useState({});
   const [gLog,setGLog]=useState([]);
 
-  const [phase,setPhase]=useState("loading"); // loading|story|mixing|shop|end
-  const [storyPages,setStoryPages]=useState([]); // {text,isEvent}
-  const [curPage,setCurPage]=useState(0);
-  const [pageOpts,setPageOpts]=useState(null); // null=continue arr=choices
+  const [phase,setPhase]=useState("loading");
+  const [storyPages,setStoryPages]=useState([]);
+  const [pageOpts,setPageOpts]=useState(null);
   const [loading,setLoading]=useState(false);
   const [nextFn,setNextFn]=useState(null);
 
@@ -402,16 +399,14 @@ function Game({cfg,onReset}){
 
   const topRef=useRef(null);
 
-  useEffect(()=>{ if(topRef.current)topRef.current.scrollTop=0; },[curPage,phase,storyPages]);
+  useEffect(()=>{ if(topRef.current)topRef.current.scrollTop=0; },[storyPages.length,phase]);
 
   const ai=async(messages)=>callAPI(provider,apiKey,model,SYS,messages);
   const addLog=e=>setGLog(l=>[...l,{day,...e}]);
   const updNpc=(name,u)=>setNpcMem(m=>({...m,[name]:{...(m[name]||{familiarity:0,profile:"",visitCount:0,lastTopics:[]}), ...u}}));
 
-  // show a new story page
   function pushPage(text,isEvent,opts,next){
     setStoryPages(p=>[...p,{text,isEvent:!!isEvent}]);
-    setCurPage(p=>p+1);
     setPageOpts(opts||null);
     setNextFn(next?{fn:next}:null);
     setPhase("story");
@@ -420,7 +415,7 @@ function Game({cfg,onReset}){
   // ── DAY START ──
   async function startDay(d,curMoney){
     setPhase("loading");setLoading(true);
-    setStoryPages([]);setCurPage(0);
+    setStoryPages([]);
     setCustIdx(0);setDayDone(false);setSat(null);setDrink([]);setCustomer(null);
     const bad=d%5===0;
     const p=`第${d}天，酒吧开业前。资金：${curMoney??money}，声望：${rep}，老板好感：${bossRel}。${bad?"今天主控状态特别差，内心活动要更阴暗消沉。":""}
@@ -693,9 +688,11 @@ NPC关系：${npcRels}，特殊事件：${events}
     setCart({});setPhase("idle");
   }
 
-  // ── current page text ──
-  const curText=storyPages[curPage]?.text||"";
-  const curIsEvent=storyPages[curPage]?.isEvent||false;
+  // ── BUG FIX: always display the last page in storyPages ──
+  const curPageData=storyPages[storyPages.length-1];
+  const curText=curPageData?.text||"";
+  const curIsEvent=curPageData?.isEvent||false;
+
   const famDisp=(()=>{if(!customer)return 0;if(customer.memKey&&npcMem[customer.memKey])return npcMem[customer.memKey].familiarity;return customer.familiarity||0;})();
 
   // ── SHOP UI ──
@@ -853,7 +850,7 @@ NPC关系：${npcRels}，特殊事件：${events}
    ROOT APP
 ════════════════════════════════════ */
 function App(){
-  const [s,setS]=useState("intro"); // intro|api|title|game
+  const [s,setS]=useState("intro");
   const [cfg,setCfg]=useState(null);
   if(s==="intro") return <IntroScreen onNext={()=>setS("api")}/>;
   if(s==="api")   return <ApiScreen onConfirm={c=>{setCfg(c);setS("title");}}/>;
