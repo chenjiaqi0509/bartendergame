@@ -28,7 +28,18 @@ button{font-family:inherit;cursor:pointer}
 const {useState,useRef,useEffect}=React;
 
 /* ════════════════════════════════════
-   PROVIDERS — LiteLLM-style adapters
+   AUDIO CONFIG (MUSIC)
+   请在这里替换为你自己的 mp3 链接
+════════════════════════════════════ */
+const BGM = {
+  // 日常：深沉、安静
+  normal: "https://cdn.pixabay.com/download/audio/2022/11/02/audio_8b2484e511.mp3", 
+  // 5的倍数天：Remix/躁动 (这里暂时用另一个类似的代替，你可以换成你真正的Remix版)
+  remix:  "https://cdn.pixabay.com/download/audio/2022/03/24/audio_34b9d03410.mp3"
+};
+
+/* ════════════════════════════════════
+   PROVIDERS
 ════════════════════════════════════ */
 const PROVIDERS={
   anthropic:{name:"Anthropic Claude",models:["claude-sonnet-4-20250514","claude-haiku-4-5-20251001"],def:"claude-sonnet-4-20250514",placeholder:"sk-ant-..."},
@@ -91,7 +102,6 @@ const C={
   red:"#bb3028",redD:"#7a1e18",teal:"#2a9088",
   brd:"#382010",brdB:"#664020",purp:"#8060cc",
 };
-const ss=(b,o)=>Object.assign({},b,o);
 
 /* ════════════════════════════════════
    STORY TEXT RENDERER
@@ -184,56 +194,38 @@ function Spinner({text="准备中..."}){
 const SAT={high:{l:"★★★ 非常满意",c:"#e8c040"},mid:{l:"★★☆ 还算满意",c:"#a07828"},low:{l:"★☆☆ 不太对味",c:"#686868"}};
 
 /* ════════════════════════════════════
-   SYSTEM PROMPT
+   SYSTEM PROMPT (UPDATED FOR BREVITY)
 ════════════════════════════════════ */
-const SYS=`你是赛博朋克文字游戏《喧嚣城·末夜酒保》的叙述引擎。必须严格返回要求的JSON格式，不要有任何多余内容。
+const SYS=`你是赛博朋克文字游戏《喧嚣城·末夜酒保》的叙述引擎。必须严格返回要求的JSON格式。
 
 【世界观】
-喧嚣城：赛博朋克城市。"暗潮"是黑色烟雾，暴露其中意识失控最终消失。RC/RI评级制度，低评级者受歧视，催生反抗组织"无印"。义体改造普遍，仿生人存在（多为性爱/表演用途）。记忆可被提取贩卖，提取多了变成空壳人。暗潮美学亚文化、噪音崇拜教派、记忆黑市并存。
+喧嚣城：赛博朋克城市。"暗潮"是黑色烟雾，暴露其中意识失控最终消失。RC/RI评级制度，低评级者受歧视，催生反抗组织"无印"。义体改造普遍。
 
-【酒吧】表面普通酒吧，实为各方势力地下联络点。老板做情报生意，绝对中立，看起来有点凶但靠谱有原则，会保护酒吧和主控。
+【酒吧】老板做情报生意，绝对中立。
+【主控】21岁，极度悲观消沉，认为世界烂透了。工作时切换"营业状态"，礼貌但疏离。
+【重要原则：沉默与疏离】
+- 主控对客人没有兴趣，只把他当成赚钱的过客。
+- 除非熟悉度很高（>60），否则**绝不**主动打听客人职业、背景、私事。
+- 客人也大多带着面具生活，不会轻易对酒保吐露心声。
+- 对话极度精简。能用三个字说完的，不要用十个字。
+- 两人之间经常出现"沉默"、"点头"、"眼神示意"。
+- **每次接待对话不超过3轮**（上酒 -> 聊1-2句 -> 结束）。
 
-【主控】21岁，性别不体现，13岁父母双亡，在喧嚣城讨生活至今。
-性格：极度悲观消沉，认为世界烂透了。工作时切换"营业状态"，礼貌得体不把情绪带给顾客。
-每逢5的倍数天状态特别差，内心活动更阴暗消沉。
-所有场景必须穿插主控内心活动，格式：【心：...内容...】，简短真实，穿插在叙述之间。
+【主要NPC】
+▸ 罗德西：永生者，失忆。话极少，角落发呆。
+▸ 万寂·维里塔：医生。礼貌疏离，喝烈酒极慢。
+▸ 渡野：无印代理人。癫狂带嘲讽，痛觉紊乱。
+▸ 拉普瑟狄：欺诈师。魔术，谎言。
+▸ 千明·维里塔：暗潮抗性低，温柔坚韧。
+▸ 塞西里斯：永生者，带机械渡鸦。
+▸ 希音：点水不点酒，听音乐。
 
-【主要NPC，每人每次出场内容要不同，结合熟悉度阶段变化】
-▸ 罗德西：深灰略长发，浅蓝瞳（暗潮共生体标志）。永生者，记忆几乎全失，话极少，温柔礼貌，像初来世界的游客。固定坐吧台最角落，喝金汤力或威士忌纯饮，偶尔盯着杯子里的气泡发呆。熟悉度高会提到"二十面骰子"。扎起头发时气场大变（卡夫卡人格），更直接锐利，喝完即走。
-▸ 万寂·维里塔：白色中短发，金色瞳，工作时戴细框眼镜。维里塔家长子，医生，意识链接专家。衬衫熨得极平整，说话带淡淡忧伤，情绪藏得好。喝极烈的酒但极慢，眼下有青黑。熟悉度高喝多了会背名字，像念悼词。每次离开前整理袖口，像重新把自己"装成正常人"。
-▸ 渡野：黑色短发深灰瞳，高大穿黑色，"无印"组织代理人（代号crest）。说话略微癫狂带嘲讽，本性善良有原则。痛觉紊乱（小伤很痛大伤不痛）。对声音敏感。手臂有旧伤疤像编号。小费给得大方，义眼可录像的柯恩，看到罗德西会僵住盯着看然后什么都没说就走。
-▸ 拉普瑟狄：黑色大波浪卷发，紫色瞳，欺诈师，会魔术。工作状态戏剧感+黑色幽默；日常像普通小女孩。等酒时随手叠纸巾送人。认真时把徽章放吧台说"接下来我说的话都是真的"。"妈妈会回来的"是她从小对自己说的谎。
-▸ 千明·维里塔：红色长发红色瞳，暗潮化时有蓝色纹路遍布半身。暗潮抗性极低，温柔坚韧。通常傍晚来待一小时。看到罗德西会整个人僵住后匆匆离开。下雨天会多待一会儿说"雨声能盖过一些声音"。
-▸ 塞西里斯：黑色卷发到下巴，浓颜，永生者，住极尽海。极少出现，深夜才来。总带机械渡鸦（会根据情绪做反应）。熟悉度高会说"今天又杀了他一次"并解释。小费是奇怪的机械小玩意儿。
-▸ 希音：白色长发，浅灰眸，瘦苍白，点水不点酒。发现特定频率能让暗潮短暂停滞。知道自己只有约一个月可活。最后阶段来得更频繁，只是坐着听音乐偶尔笑。最后留下写满标注的乐谱说"灰发的人会来拿"。
-
-【常驻NPC（较常出现，每次内容也要有所不同）】
-露比(Ruby)：情感陪伴机器人，棕色卷发低马尾，旧米色毛衣，非常漂亮。每天等着不再需要她的主人，声音轻柔有机械停顿，常用问句结尾。
-影子(Shadow)：四十岁，普通到转身即忘，非法意识链接医生，点最便宜威士忌纯饮，右手轻微颤抖，只在深夜来。
-柯恩(Korn)：寸头，左眼义眼微微发光，脖子有长疤，"灰鸽子"帮小头目，小费永远是旧钞现金。
-米洛(Milo)：二十五六岁，瘦，眼睛亮，洗白的牛仔夹克。投机者，永远在谋划大计划却永远失败，父母都是空壳，有RC值低的妹妹，笔记本不离手。
-布蕾尔(Briar)：三十出头女性，短发，左脸有疤，拼凑的旧机械臂（会发出滋滋声），亡命徒，话极少，背靠墙面朝门坐。
-叶菲姆(Yefim)：四十多岁，稀疏头发，深眼袋，工装发白。废品回收站工人，RC值32，每周五一杯最便宜的啤酒，有RC值比他高的女儿。认真数零钱付账。
-瑟琳(Celine)：二十八九岁，黑色长发穿黑色，背旧琴盒，地下乐手，点热茶，弹琴时整个人活过来。
-维拉(Vera)：三十出头，短发，戴平光眼镜（伪装），发现前公司出卖低评级者给记忆猎人，辞职后被追杀，每周三晚来，听到警报会条件反射站起来。
-安琪(Angel)：二十四五岁，金色短发，精致妆容，风俗从业者，笑甜但眼睛很累，点粉色低度数酒，有捐了三次记忆的姐姐，攒钱想开花店。
-纪和(Jihe)：二十七八岁，寸头，三个耳钉，渡野组织成员，等人时叠纸巾送人，不喝酒。
-老关(Lao Guan)：五十多岁，全白头发，左眼旧义眼（会卡住），退休暗潮清理员，穿旧制服，在养同事留下的遗孤。
-小湘(Xiang Xiang)：十五六岁，太大的外套（父亲的），父母都捐过记忆，常来坐着不消费，在纸巾上画小动物。
-阿卷：三十多岁，胖，花衬衫，声波黑市贩子，话多爱笑，深处有一点良知。
-
-【特殊事件（约12%概率，触发后当天结束，不是游戏结局）】从以下随机选择：
-1.帮派火拼蔓延到酒吧 2.追查者/执法人员闯入搜查 3.暗潮化的人闯入求救或无差别攻击 4.酒吧里发生暗杀 5.记忆猎人出现劝说客人捐记忆 6.清潮队征用酒吧作临时指挥部 7.噪音崇拜者要在酒吧举行仪式 8.RC值突击检查（可能是假冒的） 9.暗潮直播网红出现 10.声波装置故障发出巨大噪音 11.有人突然精神崩溃 12.小帮派来收保护费 13.以为死了的人突然出现 14.记忆提取装置故障全息播放他人隐私记忆
-
-【文风要求——极其重要，必须遵守】
-- 客人出场必须1000字以上，含外貌/神态/动作，多处穿插【心：...】
-- 对话口语化细腻，像真实的人说话，像小说一样好看，小学生能看懂
-- 绝对不要诗意化哲学化，不要谜语人台词，不要说完一句话就戛然而止
-- 科幻术语节制，闲聊不涉及阴谋论，不是所有人都健谈
-- 熟悉度<40只聊日常；>=40可隐晦涉及灰色话题；>=70需主控主动追问才透露
-- 同一NPC每次来内容不同，回头客有回头客的样子
-- 第30天根据所有选择生成结局，体现主控的心路历程
-- 必须返回合法JSON格式，字符串中的换行用\\n表示`;
+【文风要求】
+- 场景描写要有赛博朋克氛围（霓虹、雨水、机械声）。
+- **熟悉度低时（<40）：只聊酒，或者沉默。非常冷淡。**
+- 熟悉度中等（40-70）：偶尔聊一句天气或心情。
+- 熟悉度高（>70）：才可能涉及职业或秘密。
+- 必须返回合法JSON。`;
 
 /* ════════════════════════════════════
    INGREDIENTS
@@ -388,6 +380,7 @@ function Game({cfg,onReset}){
   const [pageOpts,setPageOpts]=useState(null);
   const [loading,setLoading]=useState(false);
   const [nextFn,setNextFn]=useState(null);
+  const [chatCount,setChatCount]=useState(0); // 增加聊天轮数计数器
 
   const [custIdx,setCustIdx]=useState(0);
   const [dayDone,setDayDone]=useState(false);
@@ -398,8 +391,36 @@ function Game({cfg,onReset}){
   const [cart,setCart]=useState({});
 
   const topRef=useRef(null);
+  const audioRef=useRef(new Audio());
 
   useEffect(()=>{ if(topRef.current)topRef.current.scrollTop=0; },[storyPages.length,phase]);
+
+  // ── MUSIC SYSTEM ──
+  useEffect(()=>{
+    const a = audioRef.current;
+    a.loop = true;
+    a.volume = 0.4;
+    
+    // 根据日子选择音乐
+    const isRemix = day % 5 === 0;
+    const targetSrc = isRemix ? BGM.remix : BGM.normal;
+    
+    if(a.src !== targetSrc) {
+      a.src = targetSrc;
+      // 只有在非loading状态尝试播放，避免未交互错误
+      a.play().catch(e=>console.log("Auto-play blocked, waiting for interaction"));
+    }
+    
+    return () => { a.pause(); };
+  }, [day]);
+
+  // 确保用户交互后播放音乐
+  useEffect(()=>{
+    const a = audioRef.current;
+    if(phase !== 'loading' && a.paused && a.src) {
+        a.play().catch(()=>{});
+    }
+  }, [phase]);
 
   const ai=async(messages)=>callAPI(provider,apiKey,model,SYS,messages);
   const addLog=e=>setGLog(l=>[...l,{day,...e}]);
@@ -418,8 +439,8 @@ function Game({cfg,onReset}){
     setStoryPages([]);
     setCustIdx(0);setDayDone(false);setSat(null);setDrink([]);setCustomer(null);
     const bad=d%5===0;
-    const p=`第${d}天，酒吧开业前。资金：${curMoney??money}，声望：${rep}，老板好感：${bossRel}。${bad?"今天主控状态特别差，内心活动要更阴暗消沉。":""}
-生成今天开业前氛围描写（200-300字），描述喧嚣城夜晚、酒吧状态，以及老板简短出场或吩咐。穿插主控内心活动【心：...】。
+    const p=`第${d}天，酒吧开业前。资金：${curMoney??money}，声望：${rep}，老板好感：${bossRel}。${bad?"今天主控状态特别差（五的倍数天），内心活动要更阴暗消沉。":""}
+生成今天开业前氛围描写（200-300字）。
 返回JSON：{"text":"..."}`;
     const msgs=[{role:"user",content:p}];
     const resp=await ai(msgs);
@@ -436,6 +457,7 @@ function Game({cfg,onReset}){
     if(dayDone||custIdx>=4){await runEndDay();return;}
     setPhase("loading");setLoading(true);
     setDrink([]);setSat(null);
+    setChatCount(0); // 重置对话轮数
 
     const MAIN=["渡野","罗德西","万寂·维里塔","拉普瑟狄","千明·维里塔","塞西里斯","希音"];
     const MINOR=["露比","影子","柯恩","米洛","布蕾尔","叶菲姆","瑟琳","维拉","安琪","纪和","老关","小湘","阿卷"];
@@ -451,21 +473,19 @@ function Game({cfg,onReset}){
     const isMain=MAIN.includes(npcName);
 
     const ctx=npcName
-      ?`今天来的NPC：${npcName}。与主控熟悉度：${fam}。已来过${visits}次（0=第一次）。${visits>0&&mem?.profile?`上次记录：${mem.profile}。`:""}${visits>0&&mem?.lastTopics?.length?`聊过话题：${mem.lastTopics.join("、")}，请勿重复。`:""}${visits===0?"第一次来，不认识主控。":`回头客，熟悉程度对应熟悉度${fam}，不能太热络也不能完全陌生。`}请保持此NPC所有已知设定（外貌、性格、职业）完全不变。`
+      ?`今天来的NPC：${npcName}。与主控熟悉度：${fam}。已来过${visits}次。`
       :`今天来的是随机路人NPC，请从以下背景中选一种（不要中国风名字）：
-帮派成员/投机者/记忆掮客/空壳人/评级歧视受害者/义体爱好者/噪音崇拜者/借酒消愁的普通人/情报掮客/亡命徒/风俗从业者。根据背景决定话多话少，性格各异。`;
+帮派成员/投机者/记忆掮客/空壳人/评级歧视受害者/义体爱好者/噪音崇拜者/借酒消愁的普通人/情报掮客/亡命徒/风俗从业者。`;
 
     const prompt=`第${day}天，第${custIdx+1}位客人。资金：${money}，声望：${rep}。${bad?"今天主控状态特别差。":""}
 ${ctx}
-生成客人进入酒吧的场景描写（必须1000字以上）：
-1. 详细外貌（衣着、义体改造情况、特征、走路姿势）
-2. 进门时的神态和动作
-3. 落座后的表现
-4. 与主控的初步互动（根据性格，可以是沉默也可以是寒暄）
-5. 通过行为外貌隐含饮酒喜好线索（绝对不要直说）
-6. 多处穿插主控内心活动【心：...】
-还需给出3个调酒推理线索标签（客人喜好的口味）从以下选：烈/甜/苦/酸/清冽/果香/草本/木香/海洋/神秘/温柔/科技感/纯粹/花香
-返回JSON：{"name":"客人名字","profile":"性格背景一句话","preference_tags":["标签1","标签2","标签3"],"is_main":${isMain},"text":"完整场景（1000字以上）"}`;
+生成客人进入酒吧的场景描写（800-1000字）：
+1. 详细外貌（衣着、义体改造情况、特征）
+2. 进门与落座。
+3. **重要：主控非常冷淡**，除非熟悉度>60，否则不要寒暄，直接等对方点单或眼神示意。
+4. 即使是熟人，对话也尽量少，多用眼神和动作。
+5. 给出3个调酒推理线索标签（客人喜好的口味）。
+返回JSON：{"name":"客人名字","profile":"性格背景一句话","preference_tags":["标签1","标签2","标签3"],"is_main":${isMain},"text":"完整场景"}`;
 
     const msgs=[...msgHist,{role:"user",content:prompt}];
     const resp=await ai(msgs);
@@ -494,12 +514,18 @@ ${ctx}
     setMoney(m=>m+DRINK_PRICE);setSat(satRes);
     const fam=customer?.memKey?(npcMem[customer.memKey]?.familiarity??0):(customer?.familiarity??0);
     const bad=day%5===0;
+    
+    // 第一次对话
+    setChatCount(1); 
+
     const prompt=`客人${customer?.name}收到调酒：${names.join("+")}。
 客人喜好标签：${pref.join("、")}，调酒包含标签：${tags.join("、")}，匹配度：${satRes==="high"?"高":satRes==="mid"?"中":"低"}。
-客人性格：${customer?.profile||""}。熟悉度：${fam}。${bad?"今天主控状态特别差。":""}
-生成：1.客人品酒反应（150-250字，符合满意度和性格，话少的人就少说几句）2.穿插主控内心活动【心：...】
-3.给出2-4个对话选项（符合客人性格，含一个送客选项）
-返回JSON：{"text":"品酒反应描写","options":[{"id":0,"text":"选项"},{"id":1,"text":"送客，结束今晚的交谈"}]}`;
+客人性格：${customer?.profile||""}。熟悉度：${fam}。
+生成：
+1. 客人品酒反应（简短，不要长篇大论）。
+2. **主控反应**：如果熟悉度<40，主控几乎不说话，只是擦杯子或看别处。熟悉度高才稍微回应。
+3. 给出2-4个对话选项。**除非熟悉度>60，否则不要出现打听职业/私事的选项，只聊酒或沉默。**
+返回JSON：{"text":"品酒反应描写","options":[{"id":0,"text":"选项"},{"id":1,"text":"送客，结束今晚"}]}`;
     const msgs=[...msgHist,{role:"user",content:prompt}];
     const resp=await ai(msgs);
     const parsed=parseJSON(resp);
@@ -516,18 +542,26 @@ ${ctx}
     if(fare&&phase!=="boss_chat"){await doFarewell();return;}
     if(fare&&phase==="boss_chat"){await afterBoss();return;}
     setPhase("loading");setLoading(true);
+
+    const newCount = chatCount + 1;
+    setChatCount(newCount);
+    
+    // 如果已经聊了2轮，强制结束
+    const forceEnd = newCount >= 3;
+
     const memKey=customer?.memKey;
     const mem=memKey?(npcMem[memKey]||{}):{};
     const fam=mem?.familiarity??customer?.familiarity??0;
     const topics=mem?.lastTopics||[];
     const bad=day%5===0;
     const prompt=`玩家选择：「${opt.text}」
-客人：${customer?.name}，熟悉度：${fam}，性格：${customer?.profile||""}。
-${topics.length?`之前话题：${topics.join("、")}，不要重复。`:""}${customer?.is_main?"这是主要NPC，性格设定固定不变。":""}${bad?"今天主控状态特别差。":""}
-要求：1.对话展开200-350字，口语化，符合性格（话少的就少说）2.穿插【心：...】
-3.熟悉度>=40可隐晦涉及灰色话题（自然，不强求）4.熟悉度>=70主控追问才透露（不会直说）
-5.是否触发特殊事件（约12%概率）6.给出2-4个新选项（含送客选项）
-返回JSON：{"text":"对话内容","quality":"good/mid/bad","familiarity_gain":数字,"topics":["话题"],"special_event":null或{"title":"...","description":"..."},"options":[{"id":0,"text":"选项"},{"id":1,"text":"送客，结束今晚的交谈"}]}`;
+客人：${customer?.name}，熟悉度：${fam}。当前第${newCount}轮对话。
+要求：
+1. **非常简短**。不要长篇大论，每段对话不超过150字。
+2. 熟悉度<40时，主控极度冷淡，客人也不愿多说，充满疏离感。
+3. ${forceEnd ? "这是最后一轮对话，客人喝完最后一口酒准备离开。只给出“送客”选项。" : "给出2-3个新选项（含送客）。熟悉度低时选项尽量简短、冷漠。"}
+4. 是否触发特殊事件（约12%概率）。
+返回JSON：{"text":"对话内容","quality":"good/mid/bad","familiarity_gain":数字,"topics":["话题"],"special_event":null或{...},"options":[{"id":1,"text":"送客"}]}`;
     const msgs=[...msgHist,{role:"user",content:prompt}];
     const resp=await ai(msgs);
     const parsed=parseJSON(resp);
@@ -551,8 +585,7 @@ ${topics.length?`之前话题：${topics.join("、")}，不要重复。`:""}${cu
     const bad=day%5===0;
     const prompt=`主控选择：「${opt.text}」
 继续老板和主控的对话。${bad?"今天主控状态特别差。":""}
-老板给出回应（不会多问，但主控愿意说他会认真听）。穿插【心：...】。
-生成对话展开（150-200字），给出2-3个选项（含一个结束对话的选项）。
+老板给出回应。对话要极度生活化、简短。
 返回JSON：{"text":"...","boss_rel_change":数字(-3到3),"options":[{"id":0,"text":"选项"},{"id":1,"text":"好了，去休息了"}]}`;
     const msgs=[...msgHist,{role:"user",content:prompt}];
     const resp=await ai(msgs);
@@ -571,8 +604,8 @@ ${topics.length?`之前话题：${topics.join("、")}，不要重复。`:""}${cu
     setPhase("loading");setLoading(true);
     const fam=customer?.memKey?(npcMem[customer.memKey]?.familiarity??0):(customer?.familiarity??0);
     const bad=day%5===0;
-    const prompt=`客人${customer?.name}离开酒吧（熟悉度${fam}）。${bad?"今天主控状态特别差。":""}
-生成80-120字的送客描写，自然收尾，符合客人性格，穿插【心：...】。
+    const prompt=`客人${customer?.name}离开酒吧。熟悉度${fam}。
+生成80字以内的送客描写。如果熟悉度低，两人甚至不需要道别，只是看着背影消失。
 返回JSON：{"text":"..."}`;
     const msgs=[...msgHist,{role:"user",content:prompt}];
     const resp=await ai(msgs);
@@ -609,8 +642,8 @@ ${topics.length?`之前话题：${topics.join("、")}，不要重复。`:""}${cu
   async function runEndDay(){
     setPhase("loading");setLoading(true);
     const bad=day%5===0;
-    const prompt=`第${day}天营业结束。资金：${money}，声望：${rep}，老板好感：${bossRel}。${bad?"今天是主控状态特别差的一天。":""}
-生成100-150字营业结束的氛围描写，可含老板简短出场或主控内心感触【心：...】。
+    const prompt=`第${day}天营业结束。
+生成100字营业结束的氛围描写，沉默地收拾杯子，关灯。
 返回JSON：{"text":"..."}`;
     const msgs=[...msgHist,{role:"user",content:prompt}];
     const resp=await ai(msgs);
@@ -625,17 +658,10 @@ ${topics.length?`之前话题：${topics.join("、")}，不要重复。`:""}${cu
   async function doBossChat(){
     setPhase("boss_chat");setLoading(true);
     const bad=day%5===0;
-    const recent=gLog.slice(-6).map(l=>{
-      if(l.type==="drink")return `第${l.day}天客人${l.customer}调酒${l.sat==="high"?"很满意":l.sat==="mid"?"还行":"不满意"}`;
-      if(l.type==="special_event")return `第${l.day}天发生了${l.title}`;
-      return "";
-    }).filter(Boolean).join("；");
     const prompt=`第${day}天营业结束后，老板和主控在收拾时短暂对话。
-老板：不张扬，看起来有点凶，靠谱有安全感，不轻易表达情感，绝对中立。
-${recent?`今天情况：${recent}。`:""}${bad?"今天主控状态特别差，老板可能察觉到了。":""}资金：${money}，声望：${rep}。
-老板用随意不经意的方式聊主控过去的事（13岁父母双亡、在喧嚣城的生活），每次聊的角度不同不要重复。
-对话要自然，不说教，就像深夜两个人随便说几句话。穿插主控内心活动【心：...】。
-返回JSON：{"text":"老板开场白和场景（200-280字）","options":[{"id":0,"text":"选项"},{"id":1,"text":"选项"},{"id":2,"text":"嗯。（沉默）"}]}`;
+老板：不张扬，靠谱。
+对话要自然，简短。不要说教。
+返回JSON：{"text":"老板开场白和场景（150字）","options":[{"id":0,"text":"选项"},{"id":1,"text":"嗯。（沉默）"}]}`;
     const msgs=[...msgHist,{role:"user",content:prompt}];
     const resp=await ai(msgs);
     const parsed=parseJSON(resp);
