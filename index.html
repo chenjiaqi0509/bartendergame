@@ -71,7 +71,7 @@ async function callAPI(provider,apiKey,model,system,messages){
 }
 
 async function testAPI(provider,apiKey,model){
-  return callAPI(provider,apiKey,model,"You are helpful.","hi just say ok",[{role:"user",content:"hi"}]);
+  return callAPI(provider,apiKey,model,"You are helpful.",[{role:"user",content:"hi just say ok"}]);
 }
 
 function parseJSON(txt){
