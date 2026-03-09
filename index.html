@@ -176,6 +176,7 @@ const EVENTS = [
   "【突发事件：RC值突击检查】官方人员带仪器抽检。RC值低的人被强行带走'接受帮助'。你看到几个熟客绝望的眼神，却无能为力。",
   "【突发事件：自杀式网红】一个主播举着相机要在暗潮边缘直播。他真的引来了黑雾，所有人在酒吧里眼睁睁看着他在镜头前被渐渐吞噬、分解。",
   "【突发事件：声波装置故障】有人私带的非法防具突然发出巨大噪音并冒烟，差点引来暗潮。最后在一声爆炸中，持有人被炸伤倒地。",
+  "【突发事件：酒吧里的分娩】一名低RC值的孕妇不敢去医院，逃到酒吧临产。在几个客人的慌乱帮助下，一个婴儿在血污与霓虹灯影中降生。",
   "【突发事件：精神崩溃】一个被暗潮阴影折磨太久的客人突然发疯，用玻璃碎片划伤自己，大喊'别碰我的记忆'，最终倒在血泊中被拖走。",
   "【突发事件：收保护费】几个不长眼的新混混来找老板要钱。老板连一句话都没说，三秒钟后他们全躺在了门外泥泞的街道上。",
   "【突发事件：死人复活】一个几个月前明明死在酒吧的客人再次推门进来。他眼神空洞、机械地点酒，仿佛是个披着人皮的空壳，让人毛骨悚然。",
@@ -566,54 +567,56 @@ function Game({cfg,onReset}){
     const w=[0.25,0.25,0.15,0.10,0.10,0.10,0.05];
     const MINOR=["露比","影子","柯恩","米洛","布蕾尔","叶菲姆","瑟琳","维拉","安琪","纪和","老关","小湘","阿卷"];
 
-   const roll=Math.random();
-    let npcName=null;
+    // 严格从列表选，永远不生成列表外NPC
+    const roll=Math.random();
+    let npcName;
     if(roll<0.30){
       let r2=Math.random(),acc=0;
       for(let i=0;i<MAIN.length;i++){acc+=w[i];if(r2<acc){npcName=MAIN[i];break;}}
+      if(!npcName) npcName=MAIN[0];
     } else {
-      // 全部走 MINOR，彻底消灭随机路人
       npcName=MINOR[Math.floor(Math.random()*MINOR.length)];
     }
 
-    const mem=npcName?(npcMem[npcName]||{familiarity:0,profile:"",visitCount:0,lastTopics:[]}):null;
-    const fam=mem?.familiarity||0;
-    const visits=mem?.visitCount||0;
+    const mem=npcMem[npcName]||{familiarity:0,profile:"",visitCount:0,lastTopics:[]};
+    const fam=mem.familiarity||0;
+    const visits=mem.visitCount||0;
     const isMain=MAIN.includes(npcName);
 
     let loreToInject="";
-    if(npcName&&NPC_DB[npcName]){
-      const db=NPC_DB[npcName];
+    const db=NPC_DB[npcName];
+    if(db){
       loreToInject=`【核心设定】：${db.desc}\n`;
       if(db.steps){
         loreToInject+=`【行为指南】：${db.steps[Math.min(visits,2)]}`;
       } else {
-        if(fam<40)loreToInject+=`【当前熟悉度阶段】：${db.f0_40}`;
-        else if(fam<70)loreToInject+=`【当前熟悉度阶段】：${db.f40_70}`;
+        if(fam<40) loreToInject+=`【当前熟悉度阶段】：${db.f0_40}`;
+        else if(fam<70) loreToInject+=`【当前熟悉度阶段】：${db.f40_70}`;
         else loreToInject+=`【当前熟悉度阶段】：${db.f70_plus}`;
       }
-    } else {
-      loreToInject="随机路人NPC，从底层打工人/帮派/情报贩子中选一种。";
     }
 
-  const prompt=`第${day}天，第${custIdx+1}位客人。
-来客：${npcName||"随机路人"}。熟悉度：${fam}。已来过${visits}次。
-主控心理值：${mcMindset}。
-${loreToInject}${famRule}
+    // 按熟悉度的话题铁规，不用emoji避免编码问题
+    const famRule = fam<40
+      ? `【话题铁规-陌生 fam=${fam}】此阶段客人绝对不说任何职业/身份/个人经历/街上见闻。进门最多一句寒暄或完全沉默落座，其余全是肢体动作描写。严禁违反。`
+      : fam<70
+      ? `【话题规则-相识 fam=${fam}】客人可简单聊酒，或提一句在外面看到的无关紧要的小事，不主动暴露职业细节或个人经历。`
+      : `【话题规则-熟识 fam=${fam}】客人可自然提到职业相关感受或个人近况，可引出角色核心设定话题。`;
 
-const famRule = fam<40
-  ? `\n⚠️【对话铁规-陌生阶段 fam=${fam}】客人绝对不说任何职业/身份/个人经历/见闻，最多一句寒暄或沉默落座，其余都是肢体动作描写。违反此规则视为严重错误。`
-  : fam<70
-  ? `\n⚠️【对话规则-相识阶段 fam=${fam}】客人可以简单聊酒，或提一句在外面看到的无关紧要的小事，不主动暴露职业细节。`
-  : `\n⚠️【对话规则-熟识阶段 fam=${fam}】客人可以自然提到职业相关感受或个人状态。`;
-  
+    const prompt=`第${day}天，第${custIdx+1}位客人。
+来客：${npcName}。熟悉度：${fam}。已来过${visits}次。
+主控心理值：${mcMindset}。
+${loreToInject}
+${famRule}
+
 生成进入场景（300-400字）：
-1. 详细描写客人推门而入、落座、点酒的外貌与动作。
-2. 场景在客人说出想要的酒、或用动作示意后结束——酒还没调，绝对不出现喝酒、品酒、饮用的内容。
+1. 详细描写客人推门而入、落座、示意要酒的外貌与动作。
+2. 场景在客人说出想要的酒或做出示意后结束——绝对不出现喝酒、品酒、饮用的内容，酒还没调。
 3. 主控冷淡，只用动作/眼神回应，不说话。
-4. 像写小说一样，把角色气质自然写出来。
+4. 话题严格遵守上方famRule，不得违反。
 5. 提供3个调酒口味偏好标签，【必须且只能】从以下列表精确复制，禁止自创：[${TAG_LIST.join(",")}]。
 返回JSON：{"name":"名字","profile":"性格","preference_tags":["标签1","标签2","标签3"],"is_main":${isMain},"text":"场景描写"}`;
+
     const msgs=[...msgHist,{role:"user",content:prompt}];
     const resp=await ai(msgs);
     const parsed=parseJSON(resp);
@@ -643,40 +646,37 @@ const famRule = fam<40
     setRep(r=>Math.max(0,Math.min(100,r+(satRes==="high"?5:satRes==="mid"?2:-2))));
     setMoney(m=>m+DRINK_PRICE);setSat(satRes);
 
-    // 熟悉度按调酒评级直接在这里加，不再依赖 AI 返回
-    const famGain = satRes==="high"?12 : satRes==="mid"?7 : 2;
+    // 熟悉度按评级直接结算，不依赖AI
+    const famGain=satRes==="high"?12:satRes==="mid"?7:2;
+    const curFam=customer?.memKey?(npcMem[customer.memKey]?.familiarity??0):(customer?.familiarity??0);
+    const fam=Math.min(100,curFam+famGain);
     if(customer?.memKey){
-      const curFam = npcMem[customer.memKey]?.familiarity??0;
-      const newFam = Math.min(100, curFam+famGain);
-      updNpc(customer.memKey, {familiarity: newFam});
-      setCustomer(c=>({...c, familiarity: newFam}));
+      updNpc(customer.memKey,{familiarity:fam});
+      setCustomer(c=>({...c,familiarity:fam}));
     }
-
-    const fam=customer?.memKey?(npcMem[customer.memKey]?.familiarity??0):(customer?.familiarity??0);
 
     let db=customer?.memKey?NPC_DB[customer.memKey]:null;
     let behavior=db?(fam<40?(db.f0_40||db.steps?.[0]):(fam<70?(db.f40_70||db.steps?.[1]):(db.f70_plus||db.steps?.[2]))):"普通回应";
 
     // 按熟悉度决定品酒后最多还能聊几轮
-  // 喝酒反应后：不管熟悉度，最多只有一次对话，然后就是送客
-    const maxRoundsAfterDrink = 2; // 1=品酒反应轮, 2=最后一轮对话后强制送客
+    const maxRoundsAfterDrink = fam<40 ? 1 : fam<70 ? 2 : 3;
 
-    const famTier = fam<40
-      ? `【低熟悉度】品酒反应一两句，只评价酒本身（口感/温度/度数），不提任何私事。选项只给"嗯。"（酒保不回应，等于结束）。`
-      : fam<70
-      ? `【中熟悉度】品酒反应可以多一句，评价酒或提一句最近在街上看到的事（不是自己私事）。给两个选项：一个简短回应（不超过6字），一个送客。`
-      : `【高熟悉度】品酒反应可以带一点个人情绪或一句角色设定里的话。给两个选项：一个可以引出话题的回应，一个送客。`;
+    const famTier = curFam<40
+      ? `【低熟悉度规则-陌生】品酒反应一两句，只评价酒本身（口感/温度/度数），绝对不提职业/身份/个人经历/见闻。只给一个选项"嗯。"（酒保不回应，客人离开）。`
+      : curFam<70
+      ? `【中熟悉度规则-相识】品酒反应可以多一句评价酒，或提一句最近在外面看到的事（不是自己私事）。给两个选项：一个简短回应（不超过6字），一个送客。`
+      : `【高熟悉度规则-熟识】品酒反应可以带一点个人情绪或一句角色设定里的话。给两个选项：一个可引出话题的回应，一个送客。`;
 
     const prompt=`客人饮用：${names.join("+")}。匹配度：${satRes==="high"?"高满意":satRes==="mid"?"中等":"不满意"}。熟悉度：${fam}。
 角色设定参考：【${behavior}】
 ${famTier}
 
-只写品酒后这一刻的片段，60字以内，克制，不夸张。
-返回JSON：{"text":"品酒片段","options":[{"id":0,"text":"选项"},{"id":1,"text":"送客"}]}`;
+生成品酒后的片段（80字以内，写实，不夸张）。
+返回JSON：{"text":"品酒片段","options":[{"id":0,"text":"选项或嗯。"},{"id":1,"text":"送客"}],"max_rounds":${maxRoundsAfterDrink}}`;
     const msgs=[...msgHist,{role:"user",content:prompt}];
     const resp=await ai(msgs);
     const parsed=parseJSON(resp);
-   if(parsed){
+    if(parsed){
       setMsgHist(msgs.concat([{role:"assistant",content:resp}]));
       setChatCount({count:1, max:maxRoundsAfterDrink});
     }
@@ -720,23 +720,23 @@ ${famTier}
       ? `【话题规则-相识】客人可以聊酒，也可以聊在街上看到的一件小事（不是自己的私事），不聊职业细节。酒保偶尔做个动作（擦杯/推过去一包烟）表示在听，但不问问题。字数100字以内。`
       : `【话题规则-熟识】可以聊职业相关的感受（不是机密）、自己的状态、见过的怪事。酒保可以用一句话或动作回应，偶尔抬眼。可以引出角色设定里的核心话题。字数120字以内。`;
 
-   const prompt=`玩家选择：「${opt.text}」。熟悉度：${fam}。这是品酒后唯一一轮对话。
+    const prompt=`玩家选择：「${opt.text}」。当前第${newCount}轮对话（最多${maxAllowed}轮）。熟悉度：${fam}。
 ${eventTrigger
-  ? `【突发事件打断】${eventTrigger}\n直接描写事件冲击场景，对话就此终止。`
-  : `角色设定参考：【${behavior}】\n${fam<40
-      ? "只回应酒，不超过40字，客人话很少。"
-      : fam<70
-      ? "可以多一句街上见到的事，不超过60字，酒保沉默。"
-      : "可以触及职业或个人状态一句，不超过80字，酒保用动作或短句回应。"
-  }`
+  ? `【突发事件打断】${eventTrigger}\n直接描写事件冲击场景，客人的反应，对话就此终止。`
+  : `角色设定参考：【${behavior}】\n${famDialogRule}`
 }
-之后不再继续对话，只给一个送客选项（文字符合角色语气）。
-返回JSON：{"text":"场景描写","quality":"good/bad","familiarity_gain":数字,"topics":["话题"],"options":[{"id":0,"text":"送客类结束语"}]}`;
+选项要求：${
+  eventTrigger ? "只给一个'护送客人离开'选项。" :
+  forceEnd     ? "这是最后一轮。只给一个'送客'选项，文字自然点，符合角色语气。" :
+                 "给2个选项：一个是符合当前熟悉度的简短回应（不超过8字），另一个是'送客'类结束选项。"
+}
+返回JSON：{"text":"场景描写","quality":"good/bad","familiarity_gain":数字（陌生时0-3，相识时0-5，熟识时0-8），"topics":["话题关键词"],"options":[{"id":0,"text":"..."},{"id":1,"text":"..."}]}`;
+
     const msgs=[...msgHist,{role:"user",content:prompt}];
     const resp=await ai(msgs);
     const parsed=parseJSON(resp);
     if(parsed){
-     // 熟悉度已在上酒时结算，这里只更新话题记录
+      // 熟悉度已在上酒时结算，只更新话题记录
       if(memKey)updNpc(memKey,{lastTopics:[...topics,...(parsed.topics||[])].slice(-6)});
       if(parsed.quality==='good')setMcMindset(m=>Math.min(100,m+4));
       else if(parsed.quality==='bad')setMcMindset(m=>Math.max(0,m-4));
